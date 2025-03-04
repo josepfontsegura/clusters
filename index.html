@@ -13,14 +13,12 @@
     }
     svg { 
       display: block; 
-      /* L'SVG ocuparà tota la finestra */
       width: 100vw; 
       height: 100vh; 
     }
     .links line { stroke: #999; stroke-opacity: 0.6; }
     .nodes circle { stroke: #fff; stroke-width: 1.5px; }
     text { font-size: 10px; pointer-events: none; }
-    /* Estils per la llegenda */
     .legend {
       position: absolute;
       top: 10px;
@@ -30,9 +28,7 @@
       border: 1px solid #ccc;
       font-size: 12px;
     }
-    .legend div {
-      margin: 4px 0;
-    }
+    .legend div { margin: 4px 0; }
   </style>
 </head>
 <body>
@@ -43,7 +39,7 @@
     // URL del teu Google Sheet publicat en format CSV (assegura't d'usar gid=0 per la pestanya "Requisits")
     const csvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRjvGwVki61XZNME0B1g81EJy7vOc2J-hdq9Rmnby1sV3Gl-zU8-XAlLRhJJYgGYEXsiFjFbf4Ctgaz/pub?gid=0&single=true&output=csv";
     
-    // Definim manualment els noms dels clústers segons la segona pestanya de l'excel
+    // Noms dels clústers segons la segona pestanya de l'excel
     const clusterNames = {
       "1": "Matemàtiques i física",
       "2": "Programació i algorismes",
@@ -58,13 +54,12 @@
       "11": "Sistemes i comunicacions"
     };
     
-    // Carrega el CSV
     d3.csv(csvUrl).then(data => {
       console.log("Dades carregades:", data);
       const cols = data.columns;
       console.log("Columnes:", cols);
       
-      // Es assumeix que:
+      // Es assumeix:
       // cols[0]: "#" (nombre de requisits, per node)
       // cols[1]: "C" (cluster)
       // cols[2]: Nom de l'assignatura
@@ -74,10 +69,10 @@
       const assignaturaCol = cols[2];
       const reqKeys = cols.slice(3);
       
-      // Creem els nodes amb el valor numèric de la columna "#"
+      // Creem els nodes aplicant .trim() per eliminar espais innecessaris
       const nodes = data.map(d => ({
-        id: d[assignaturaCol],
-        cluster: d[clusterCol],
+        id: d[assignaturaCol].trim(),
+        cluster: d[clusterCol].trim(),
         prereqCount: +d[countCol]
       }));
       
@@ -86,19 +81,21 @@
       nodes.forEach(n => { nodeById[n.id] = n; });
       
       // Creem els enllaços: per cada fila, per cada columna de requisits,
-      // si hi ha una "X", es crea un link des de la assignatura de la fila (source)
-      // cap a l'assignatura que apareix al header d'aquesta columna (target)
+      // si hi ha "X", es crea un link des de l'assignatura de la fila (source)
+      // cap a l'assignatura indicada pel header (target)
       const links = [];
       data.forEach(d => {
         reqKeys.forEach(reqKey => {
           if(d[reqKey] && d[reqKey].trim() === "X") {
-            if(nodeById[reqKey]) {
+            let sourceName = d[assignaturaCol].trim();
+            let targetName = reqKey.trim();
+            if(nodeById[targetName]) {
               links.push({
-                source: d[assignaturaCol],
-                target: reqKey
+                source: sourceName,
+                target: targetName
               });
             } else {
-              console.warn("Target no trobat:", reqKey, "per la font", d[assignaturaCol]);
+              console.warn("Target no trobat:", targetName, "per la font", sourceName);
             }
           }
         });
@@ -107,16 +104,13 @@
       console.log("Nodes:", nodes);
       console.log("Links:", links);
       
-      // Configura l'SVG per ocupar tota la finestra
       const svg = d3.select("svg");
       const width = window.innerWidth;
       const height = window.innerHeight;
       svg.attr("width", width).attr("height", height);
       
-      // Creem un contenidor per tota la visualització per aplicar zoom/pan
+      // Contenidor per aplicar zoom i pan
       const container = svg.append("g");
-      
-      // Aplica zoom i pan
       svg.call(d3.zoom()
          .scaleExtent([0.1, 10])
          .on("zoom", (event) => {
@@ -128,7 +122,7 @@
       defs.append("marker")
           .attr("id", "arrow")
           .attr("viewBox", "0 -5 10 10")
-          .attr("refX", 15)  // Aquest valor pot ajustar-se segons el radi dels nodes
+          .attr("refX", 15)
           .attr("refY", 0)
           .attr("markerWidth", 6)
           .attr("markerHeight", 6)
@@ -148,11 +142,12 @@
       // Escala de colors per clúster
       const color = d3.scaleOrdinal(d3.schemeCategory10);
       
-      // Crea la simulació de forces
+      // Configura la simulació de forces
       const simulation = d3.forceSimulation(nodes)
         .force("link", d3.forceLink(links).id(d => d.id).distance(150))
-        .force("charge", d3.forceManyBody().strength(-300))
-        .force("center", d3.forceCenter(width/2, height/2));
+        .force("charge", d3.forceManyBody().strength(-250))
+        .force("center", d3.forceCenter(width/2, height/2))
+        .force("collide", d3.forceCollide(d => radiusScale(d.prereqCount) + 5));
       
       // Dibuixa els enllaços dins del contenidor
       const link = container.append("g")
@@ -176,8 +171,8 @@
             .on("drag", dragged)
             .on("end", dragended));
       
-      // Afegim etiquetes per a cada node
-      const label = container.append("g")
+      // Afegim etiquetes visibles per cada node (noms de les assignatures)
+      const labels = container.append("g")
         .attr("class", "labels")
         .selectAll("text")
         .data(nodes)
@@ -186,31 +181,30 @@
           .attr("dx", d => radiusScale(d.prereqCount) + 2)
           .attr("dy", ".35em");
       
-      // Actualització en cada tick
       simulation.on("tick", () => {
         // Ajustem la posició final dels enllaços perquè la punta de la fletxa toqui el contorn del node destí
-        const markerOffset = 0; // Aquí pots ajustar si cal més precisió
+        const markerOffset = 0; // Ajusta aquest valor si cal
         link
           .attr("x1", d => d.source.x)
           .attr("y1", d => d.source.y)
           .attr("x2", d => {
             let dx = d.target.x - d.source.x,
                 dy = d.target.y - d.source.y,
-                dr = Math.sqrt(dx*dx + dy*dy),
+                dr = Math.sqrt(dx * dx + dy * dy),
                 r = radiusScale(d.target.prereqCount) - markerOffset;
             return d.target.x - (dx * r / dr);
           })
           .attr("y2", d => {
             let dx = d.target.x - d.source.x,
                 dy = d.target.y - d.source.y,
-                dr = Math.sqrt(dx*dx + dy*dy),
+                dr = Math.sqrt(dx * dx + dy * dy),
                 r = radiusScale(d.target.prereqCount) - markerOffset;
             return d.target.y - (dy * r / dr);
           });
         node
           .attr("cx", d => d.x)
           .attr("cy", d => d.y);
-        label
+        labels
           .attr("x", d => d.x)
           .attr("y", d => d.y);
       });
@@ -232,7 +226,7 @@
         d.fy = null;
       }
       
-      // Afegim la llegenda amb els noms dels clústers i els colors corresponents
+      // Afegim la llegenda per clúster
       const legend = d3.select("body").append("div")
         .attr("class", "legend");
       
@@ -252,19 +246,19 @@
       console.error("Error carregant el CSV:", error);
     });
     
-    // Funcions de drag
     function dragstarted(event, d) {
-      if (!event.active) event.subject.fx = event.subject.x;
-      event.subject.fx = event.subject.x;
-      event.subject.fy = event.subject.y;
+      if (!event.active) simulation.alphaTarget(0.3).restart();
+      d.fx = d.x;
+      d.fy = d.y;
     }
     function dragged(event, d) {
-      event.subject.fx = event.x;
-      event.subject.fy = event.y;
+      d.fx = event.x;
+      d.fy = event.y;
     }
     function dragended(event, d) {
-      if (!event.active) event.subject.fx = null;
-      event.subject.fy = null;
+      if (!event.active) simulation.alphaTarget(0);
+      d.fx = null;
+      d.fy = null;
     }
   </script>
 </body>
