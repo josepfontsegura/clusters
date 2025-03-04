@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+  <meta charset="utf-8">
+  <title>Visualització dels requisits entre assignatures</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 0; }
+    h1 {
+      font-size: 20px;
+      text-align: center;
+      margin: 10px 0;
+    }
+    svg { 
+      display: block; 
+      /* L'SVG ocuparà tota la finestra */
+      width: 100vw; 
+      height: 100vh; 
+    }
+    .links line { stroke: #999; stroke-opacity: 0.6; }
+    .nodes circle { stroke: #fff; stroke-width: 1.5px; }
+    text { font-size: 10px; pointer-events: none; }
+    /* Estils per la llegenda */
+    .legend {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: white;
+      padding: 10px;
+      border: 1px solid #ccc;
+      font-size: 12px;
+    }
+    .legend div {
+      margin: 4px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>Visualització dels requisits entre assignatures</h1>
+  <svg></svg>
+  
+  <script>
+    // URL del teu Google Sheet publicat en format CSV (assegura't d'usar gid=0 per la pestanya "Requisits")
+    const csvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRjvGwVki61XZNME0B1g81EJy7vOc2J-hdq9Rmnby1sV3Gl-zU8-XAlLRhJJYgGYEXsiFjFbf4Ctgaz/pub?gid=0&single=true&output=csv";
+    
+    // Definim manualment els noms dels clústers segons la segona pestanya de l'excel
+    const clusterNames = {
+      "1": "Matemàtiques i física",
+      "2": "Programació i algorismes",
+      "3": "Sistemes informàtics",
+      "4": "Intel·ligència artificial",
+      "5": "Ciència/bases/Mineria de dades",
+      "6": "Xarxes i Seguretat",
+      "7": "Gràfics i interacció",
+      "8": "Societat i professionalització",
+      "9": "Processament d'imatge i vídeo",
+      "10": "Processament d'àudio",
+      "11": "Sistemes i comunicacions"
+    };
+    
+    // Carrega el CSV
+    d3.csv(csvUrl).then(data => {
+      console.log("Dades carregades:", data);
+      const cols = data.columns;
+      console.log("Columnes:", cols);
+      
+      // Es assumeix que:
+      // cols[0]: "#" (nombre de requisits, per node)
+      // cols[1]: "C" (cluster)
+      // cols[2]: Nom de l'assignatura
+      // cols[3] en endavant: noms d'assignatures per als requisits.
+      const countCol = cols[0];
+      const clusterCol = cols[1];
+      const assignaturaCol = cols[2];
+      const reqKeys = cols.slice(3);
+      
+      // Creem els nodes amb el valor numèric de la columna "#"
+      const nodes = data.map(d => ({
+        id: d[assignaturaCol],
+        cluster: d[clusterCol],
+        prereqCount: +d[countCol]
+      }));
+      
+      // Mapping per cercar nodes per id
+      const nodeById = {};
+      nodes.forEach(n => { nodeById[n.id] = n; });
+      
+      // Creem els enllaços: per cada fila, per cada columna de requisits,
+      // si hi ha una "X", es crea un link des de la assignatura de la fila (source)
+      // cap a l'assignatura que apareix al header d'aquesta columna (target)
+      const links = [];
+      data.forEach(d => {
+        reqKeys.forEach(reqKey => {
+          if(d[reqKey] && d[reqKey].trim() === "X") {
+            if(nodeById[reqKey]) {
+              links.push({
+                source: d[assignaturaCol],
+                target: reqKey
+              });
+            } else {
+              console.warn("Target no trobat:", reqKey, "per la font", d[assignaturaCol]);
+            }
+          }
+        });
+      });
+      
+      console.log("Nodes:", nodes);
+      console.log("Links:", links);
+      
+      // Configura l'SVG per ocupar tota la finestra
+      const svg = d3.select("svg");
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      svg.attr("width", width).attr("height", height);
+      
+      // Creem un contenidor per tota la visualització per aplicar zoom/pan
+      const container = svg.append("g");
+      
+      // Aplica zoom i pan
+      svg.call(d3.zoom()
+         .scaleExtent([0.1, 10])
+         .on("zoom", (event) => {
+           container.attr("transform", event.transform);
+         }));
+      
+      // Defineix el marcador d'arrow
+      const defs = svg.append("defs");
+      defs.append("marker")
+          .attr("id", "arrow")
+          .attr("viewBox", "0 -5 10 10")
+          .attr("refX", 15)  // Aquest valor pot ajustar-se segons el radi dels nodes
+          .attr("refY", 0)
+          .attr("markerWidth", 6)
+          .attr("markerHeight", 6)
+          .attr("orient", "auto")
+        .append("path")
+          .attr("d", "M0,-5L10,0L0,5")
+          .attr("fill", "#999");
+      
+      // Escala per al radi dels nodes segons prereqCount
+      const counts = nodes.map(d => d.prereqCount);
+      const minCount = d3.min(counts);
+      const maxCount = d3.max(counts);
+      const radiusScale = d3.scaleLinear()
+          .domain([minCount, maxCount])
+          .range([5, 20]);
+      
+      // Escala de colors per clúster
+      const color = d3.scaleOrdinal(d3.schemeCategory10);
+      
+      // Crea la simulació de forces
+      const simulation = d3.forceSimulation(nodes)
+        .force("link", d3.forceLink(links).id(d => d.id).distance(150))
+        .force("charge", d3.forceManyBody().strength(-300))
+        .force("center", d3.forceCenter(width/2, height/2));
+      
+      // Dibuixa els enllaços dins del contenidor
+      const link = container.append("g")
+        .attr("class", "links")
+        .selectAll("line")
+        .data(links)
+        .enter().append("line")
+          .attr("stroke-width", 1.5)
+          .attr("marker-end", "url(#arrow)");
+      
+      // Dibuixa els nodes dins del contenidor
+      const node = container.append("g")
+        .attr("class", "nodes")
+        .selectAll("circle")
+        .data(nodes)
+        .enter().append("circle")
+          .attr("r", d => radiusScale(d.prereqCount))
+          .attr("fill", d => color(d.cluster))
+          .call(d3.drag()
+            .on("start", dragstarted)
+            .on("drag", dragged)
+            .on("end", dragended));
+      
+      // Afegim etiquetes per a cada node
+      const label = container.append("g")
+        .attr("class", "labels")
+        .selectAll("text")
+        .data(nodes)
+        .enter().append("text")
+          .text(d => d.id)
+          .attr("dx", d => radiusScale(d.prereqCount) + 2)
+          .attr("dy", ".35em");
+      
+      // Actualització en cada tick
+      simulation.on("tick", () => {
+        // Ajustem la posició final dels enllaços perquè la punta de la fletxa toqui el contorn del node destí
+        const markerOffset = 0; // Aquí pots ajustar si cal més precisió
+        link
+          .attr("x1", d => d.source.x)
+          .attr("y1", d => d.source.y)
+          .attr("x2", d => {
+            let dx = d.target.x - d.source.x,
+                dy = d.target.y - d.source.y,
+                dr = Math.sqrt(dx*dx + dy*dy),
+                r = radiusScale(d.target.prereqCount) - markerOffset;
+            return d.target.x - (dx * r / dr);
+          })
+          .attr("y2", d => {
+            let dx = d.target.x - d.source.x,
+                dy = d.target.y - d.source.y,
+                dr = Math.sqrt(dx*dx + dy*dy),
+                r = radiusScale(d.target.prereqCount) - markerOffset;
+            return d.target.y - (dy * r / dr);
+          });
+        node
+          .attr("cx", d => d.x)
+          .attr("cy", d => d.y);
+        label
+          .attr("x", d => d.x)
+          .attr("y", d => d.y);
+      });
+      
+      function dragstarted(event, d) {
+        if (!event.active) simulation.alphaTarget(0.3).restart();
+        d.fx = d.x;
+        d.fy = d.y;
+      }
+      
+      function dragged(event, d) {
+        d.fx = event.x;
+        d.fy = event.y;
+      }
+      
+      function dragended(event, d) {
+        if (!event.active) simulation.alphaTarget(0);
+        d.fx = null;
+        d.fy = null;
+      }
+      
+      // Afegim la llegenda amb els noms dels clústers i els colors corresponents
+      const legend = d3.select("body").append("div")
+        .attr("class", "legend");
+      
+      Object.keys(clusterNames).forEach(key => {
+        const item = legend.append("div");
+        item.append("span")
+          .style("display", "inline-block")
+          .style("width", "12px")
+          .style("height", "12px")
+          .style("background-color", color(key))
+          .style("margin-right", "6px");
+        item.append("span")
+          .text(clusterNames[key]);
+      });
+      
+    }).catch(error => {
+      console.error("Error carregant el CSV:", error);
+    });
+    
+    // Funcions de drag
+    function dragstarted(event, d) {
+      if (!event.active) event.subject.fx = event.subject.x;
+      event.subject.fx = event.subject.x;
+      event.subject.fy = event.subject.y;
+    }
+    function dragged(event, d) {
+      event.subject.fx = event.x;
+      event.subject.fy = event.y;
+    }
+    function dragended(event, d) {
+      if (!event.active) event.subject.fx = null;
+      event.subject.fy = null;
+    }
+  </script>
+</body>
+</html>
